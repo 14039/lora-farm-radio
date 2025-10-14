@@ -1,8 +1,0 @@
-Review the transmitter and receiver code + layout in ai_context.txt.
-
-Currently the receiver is configured to write to the serial line, but now we want to configure it to write to the internet. We use Google Cloud API
-Service Account email: pi-logger@raspberrypilogger-471402.iam.gserviceaccount.com
-
-Sheet URL: https://docs.google.com/spreadsheets/d/1cylhStNh4lJ1DeXBaWiGCLXtVj-kF_PwUBJcI4kv6pA/edit?gid=0#gid=0
-
-
