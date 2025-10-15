@@ -8,7 +8,16 @@
 #include <Adafruit_SleepyDog.h>
 #include <Adafruit_SHT31.h>
 
+
+
+// ------------ Sensor identity ------------
+#define SENSOR_ID 1
 #define NAME "test-tx"
+
+// Optional fixed GPS coordinates for sensor registration (set to NAN if unknown)
+#define GPS_LATITUDE   37.4219999
+#define GPS_LONGITUDE -122.0840575
+
 
 // ------------ Build-time switches ------------
 // MODE: "serial" (print + wireless) or "wireless" (wireless only)
@@ -18,6 +27,10 @@
 // SENSOR: "temp" for SHT31-D, "moisture" for capacitive moisture on A1
 #define SENSOR "moisture"
 
+
+// Here's what the output looks like:
+// TX 0 -> 42 | {"net":165,"sensor_id":1,"name":"test-tx","sequence":0,"millis_since_boot":1981,"battery_v":4.271,"temperature_c":null,"humidity_pct":null,"capacitance_val":3016,"gps_lat":37.4219999,"gps_long":-122.0840575}
+//TX 1 -> 42 | {"net":165,"sensor_id":1,"name":"test-tx","sequence":1,"millis_since_boot":2223,"battery_v":4.279,"temperature_c":null,"humidity_pct":null,"capacitance_val":3013,"gps_lat":37.4219999,"gps_long":-122.0840575}
 
 // ------------ RFM95 wiring (Feather M0 LoRa default) ------------
 #define RFM95_CS   8
@@ -33,7 +46,7 @@
 #define SEND_INTERVAL_MS 15000UL  // extend for battery operation (e.g., 60_000+)
 
 // ------------ Addressing (RadioHead headers) ------------
-#define MY_ADDR    0x01           // this transmitter's node ID
+#define MY_ADDR    ((uint8_t)(SENSOR_ID & 0xFF)) // derive 1-byte radio address
 #define DEST_ADDR  0x42           // receiver's node ID
 #define NET_ID     0xA5           // app-level network ID (for debugging)
 
@@ -115,7 +128,7 @@ static void powerOn() {
 static void measure(char* json, size_t jsonSize) {
   // Common readings
   const float vbat = readVBAT();
-  const uint32_t ts = millis();
+  const uint32_t millisSinceBoot = millis();
 
   // Sensor readings
   float tempC = NAN, rh = NAN;
@@ -130,27 +143,30 @@ static void measure(char* json, size_t jsonSize) {
   }
 
   // Prepare field tokens (either numeric string or null)
-  char tBuf[16]; const char* tTok = "null";
-  char rhBuf[16]; const char* rhTok = "null";
-  char mBuf[16]; const char* mTok = "null";
-  if (!isnan(tempC)) { snprintf(tBuf, sizeof(tBuf), "%.2f", tempC); tTok = tBuf; }
-  if (!isnan(rh))    { snprintf(rhBuf, sizeof(rhBuf), "%.2f", rh);  rhTok = rhBuf; }
-  if (moisture >= 0) { snprintf(mBuf, sizeof(mBuf), "%d", moisture); mTok = mBuf; }
+  char tempBuf[16]; const char* temperatureTok = "null";
+  char rhBuf[16];   const char* humidityTok    = "null";
+  char mBuf[16];    const char* capacitanceTok = "null";
+  if (!isnan(tempC)) { snprintf(tempBuf, sizeof(tempBuf), "%.2f", tempC); temperatureTok = tempBuf; }
+  if (!isnan(rh))    { snprintf(rhBuf,  sizeof(rhBuf),  "%.2f", rh);  humidityTok    = rhBuf; }
+  if (moisture >= 0) { snprintf(mBuf,   sizeof(mBuf),   "%d",   moisture); capacitanceTok = mBuf; }
 
   // Build compact JSON
-  // {"net":165,"node":1,"name":"x","seq":1,"ts":1,"vbat":4.12,"t":..,"rh":..,"moist":..}
+  // {"net":165,"sensor_id":1,"name":"x","sequence":1,"millis_since_boot":1,"battery_v":4.12,
+  //  "temperature_c":..,"humidity_pct":..,"capacitance_val":..,"gps_lat":..,"gps_long":..}
   int n = snprintf(
     json, jsonSize,
-    "{\"net\":%u,\"node\":%u,\"name\":\"%s\",\"seq\":%lu,\"ts\":%lu,\"vbat\":%.3f,\"t\":%s,\"rh\":%s,\"moist\":%s}",
+    "{\"net\":%u,\"sensor_id\":%u,\"name\":\"%s\",\"sequence\":%lu,\"millis_since_boot\":%lu,\"battery_v\":%.3f,\"temperature_c\":%s,\"humidity_pct\":%s,\"capacitance_val\":%s,\"gps_lat\":%.7f,\"gps_long\":%.7f}",
     (unsigned)NET_ID,
-    (unsigned)MY_ADDR,
+    (unsigned)SENSOR_ID,
     NAME,
     (unsigned long)seq,
-    (unsigned long)ts,
+    (unsigned long)millisSinceBoot,
     vbat,
-    tTok,
-    rhTok,
-    mTok
+    temperatureTok,
+    humidityTok,
+    capacitanceTok,
+    (double)GPS_LATITUDE,
+    (double)GPS_LONGITUDE
   );
   if (n < 0 || (size_t)n >= jsonSize) {
     strcpy(json, "{\"err\":\"pkt_ovf\"}");
@@ -183,7 +199,7 @@ void setup() {
 }
 
 void loop() {
-  char json[192];
+  char json[256];
   measure(json, sizeof(json));
   transmit(json);
   seq++;

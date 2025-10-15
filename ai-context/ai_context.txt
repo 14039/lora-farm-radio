@@ -1,0 +1,23 @@
+Notes: Rasp Pi at "ssh starfarm@192.168.1.216" -- try "ping 192.168.1.216" beforehand optionally.
+
+The project is a wireless communciation project:
+
+1. A TRANSMITTER is an Adafruit Feather M0 LoRa single board computer. It is connected to a sensor, either a SHT31-D temperature and humidity sensor via I2C, or an analog capacitive soil moisture sensor (on pin A1) by DFRobot. The design should be low power.
+
+2. The TRANSMITTER is transmitting temperature and humidity, or soil moisture, measurements on some fixed interval
+
+3. The RECEIVER is another Adafruit Feather M0 connected to a Raspberry Pi model B. The Pi and M0 are connected via microUSB <-> USB, and the M0 acts as the antenna + receiver. The Raspberry Pi is also connected via ethernet to a Starlink router, so it can transmit the received data to the internet.
+
+4. The purpose of the Feather RECEIVER is simply to receive information from one or more TRANSMITTERS, and pass it along to the Raspberry Pi. The RECEIVER is only responsible for relaying information, so it's code should be simple, just taking what is received from the TRANSMITTER and handing it off (over USB) to the Raspberry Pi, which will ultimately write it to the hosted AWS database.
+
+
+Raspberry Pi Uploader (log_to_aws.py) – Summary
+
+- Role: Read JSON packets from Feather M0 RX over USB serial, translate into the farm DB schema, queue locally, and batch-upload to AWS Postgres during a short window each hour (default first 5 minutes) to match WiFi power scheduling.
+- Input: Accepts pure JSON lines emitted by RX (which appends "rssi_dbm"); also tolerates older lines like "... | {json}". Lines starting with "#" are ignored.
+- Translation: Deterministic sensor identity via hardware_id = 1000 + (CRC32(name) & 0x7FFFFFFF). Reading timestamp is set at Pi receipt time (UTC). Fields mapped: sequence, temperature_c, humidity_pct, capacitance_val, battery_v, rssi_dbm. Sensor metadata includes {"source":"radio","net":<net>} and optional gps from packet or DEFAULT_LAT/LON.
+- DB writes (psycopg v3): Upsert sensor on conflict(hardware_id) keeping name/type/coords/metadata current; insert readings with ON CONFLICT(sensor_id, ts) DO NOTHING for idempotency. Session timezone set to UTC.
+- Upload gating: Only uploads when in the hourly window and DB is reachable (quick connect check with short timeout); otherwise keeps queueing.
+- Env config: DATABASE_URL (required); SERIAL_PORT (optional), SERIAL_BAUD (115200 default); SENSOR_TYPE (default "temperature"); DEFAULT_LAT/DEFAULT_LON (optional); BATCH_SIZE (500), TICK_SECONDS (5), UPLOAD_WINDOW_MINUTES (5), CONNECT_TIMEOUT_S (5), SPOOL_PATH (optional JSONL for lightweight persistence).
+- Dependencies: pyserial, psycopg[binary]>=3.1
+- Run: python3 log_to_aws.py; for systemd boot service, see ai-context/rasp_pi_impl_notes.txt.

@@ -1,0 +1,62 @@
+Raspberry Pi Uploader – Environment and Service Setup
+
+Overview
+- The uploader (`log_to_aws.py`) runs on the Raspberry Pi, reads JSON packets from the Feather M0 RX over USB serial, and uploads in batches to AWS Postgres whenever connectivity is available. It checks reachability every 90 seconds by default and flushes up to 500 readings per cycle.
+
+Environment Variables
+- DATABASE_URL (required): Postgres URL, e.g. `postgresql://postgres:password@host:5432/postgres?sslmode=disable`
+- SERIAL_PORT (optional): e.g. `/dev/ttyACM0` (auto-detect if unset)
+- SERIAL_BAUD (optional): default `115200`
+- SENSOR_TYPE (optional): default `temperature`
+- DEFAULT_LAT / DEFAULT_LON (optional): fallback coordinates for sensor registration
+- BATCH_SIZE (optional): default `500`
+- TICK_SECONDS (optional): default `90`
+- CONNECT_TIMEOUT_S (optional): default `5`
+
+System Dependencies
+- Python packages: `pyserial`, `psycopg[binary]>=3.1`
+- Accurate time: `systemd-timesyncd` or `chrony` recommended for correct UTC timestamps
+
+Installation Layout (example)
+- Place code under `/opt/farm-uploader/`
+  - `/opt/farm-uploader/log_to_aws.py`
+
+Systemd Service
+- Create `/etc/systemd/system/farm-uploader.service` with:
+
+  [Unit]
+  Description=Farm Sensor Uploader (AWS)
+  After=network-online.target
+  Wants=network-online.target
+
+  [Service]
+  WorkingDirectory=/opt/farm-uploader
+  Environment=DATABASE_URL=postgresql://postgres:password@db-host:5432/postgres?sslmode=disable
+  # Optional overrides:
+  # Environment=SERIAL_PORT=/dev/ttyACM0
+  # Environment=DEFAULT_LAT=37.4219999
+  # Environment=DEFAULT_LON=-122.0840575
+  # Environment=BATCH_SIZE=500
+  # Environment=TICK_SECONDS=90
+  ExecStart=/usr/bin/python3 /opt/farm-uploader/log_to_aws.py
+  Restart=always
+  RestartSec=5
+  User=pi
+  Group=pi
+
+  [Install]
+  WantedBy=multi-user.target
+
+Enable and Start
+- sudo systemctl daemon-reload
+- sudo systemctl enable --now farm-uploader
+- sudo systemctl status farm-uploader
+
+Testing
+- Verify serial is present: `ls /dev/ttyACM* /dev/ttyUSB*` (as applicable)
+- Confirm DB connectivity: `psql "$DATABASE_URL" -c "select 1;"`
+- Watch logs: `journalctl -u farm-uploader -f -n 200`
+
+Notes
+- The script is robust to intermittent WiFi; it continuously enqueues data and will flush when `DATABASE_URL` is reachable.
+- Idempotent inserts ensure repeated uploads do not duplicate readings.

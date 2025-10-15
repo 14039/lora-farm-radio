@@ -1,0 +1,81 @@
+Our soil moisture sensor measures soil mositure levels by capacitive sensing rather than resistive sensing like other sensors on the market. It is made of corrosion resistant material which gives it an excellent service life.
+Insert it in to the soil around your plants and impress your friends with real-time soil moisture data!
+This module includes an on-board voltage regulator which gives it an operating voltage range of 3.3 ~ 5.5V. It is perfect for low-voltage MCUs, both 3.3V and 5V. For compatibility with a Raspberry Pi it will need an ADC converter.
+This soil moisture sensor is compatible with our 3-pin "Gravity" interface, which can be directly connected to the Gravity I/O expansion shield.
+
+Specification
+Operating Voltage: 3.3 ~ 5.5 VDC
+Output Voltage: 0 ~ 3.0VDC
+Operating Current: 5mA
+Interface: PH2.0-3P
+Dimensions: 3.86 x 0.905 inches (L x W)
+Weight: 15g
+
+Calibration Code
+void setup() {
+  Serial.begin(9600); // open serial port, set the baud rate as 9600 bps
+}
+void loop() {
+  int val;
+  val = analogRead(0); //connect sensor to Analog 0
+  Serial.println(val); //print the value to serial port
+  delay(100);
+}
+
+Open the serial port monitor and set the baud rate to 9600
+
+Record the sensor value when the probe is exposed to the air as "Value 1". This is the boundary value of dry soil “Humidity: 0%RH”
+
+Take a cup of water and insert the probe into it no further than the red line in the diagram
+
+Record the sensor value when the probe is exposed to the water as "Value 2". This is the boundary value of moist soil “Humidity: 100%RH”
+
+Section Settings
+The final output value is affected by probe insertion depth and how tight the soil packed around it is. We regard "value_1" as dry soil and "value_2" as soaked soil. This is the sensor detection range.
+For example: Value_1 = 520; Value_2 = 260.
+The range will be divided into three sections: dry, wet, water. Their related values are:
+
+Dry: (520 430]
+Wet: (430 350]
+Water: (350 260]
+Test Code
+/***************************************************
+ This example reads Capacitive Soil Moisture Sensor.
+
+ Created 2015-10-21
+ By berinie Chen <bernie.chen@dfrobot.com>
+
+ GNU Lesser General Public License.
+ See <http://www.gnu.org/licenses/> for details.
+ All above must be included in any redistribution
+ ****************************************************/
+
+/***********Notice and Trouble shooting***************
+ 1.Connection and Diagram can be found here: https://www.dfrobot.com/wiki/index.php?title=Capacitive_Soil_Moisture_Sensor_SKU:SEN0193
+ 2.This code is tested on Arduino Uno.
+ 3.Sensor is connect to Analog 0 port.
+ ****************************************************/
+
+const int AirValue = 520;   //you need to replace this value with Value_1
+const int WaterValue = 260;  //you need to replace this value with Value_2
+int intervals = (AirValue - WaterValue)/3;
+int soilMoistureValue = 0;
+void setup() {
+  Serial.begin(9600); // open serial port, set the baud rate to 9600 bps
+}
+void loop() {
+soilMoistureValue = analogRead(A0);  //put Sensor insert into soil
+if(soilMoistureValue > WaterValue && soilMoistureValue < (WaterValue + intervals))
+{
+  Serial.println("Very Wet");
+}
+else if(soilMoistureValue > (WaterValue + intervals) && soilMoistureValue < (AirValue - intervals))
+{
+  Serial.println("Wet");
+}
+else if(soilMoistureValue < AirValue && soilMoistureValue > (AirValue - intervals))
+{
+  Serial.println("Dry");
+}
+delay(100);
+}

@@ -1,42 +1,38 @@
-// Feather M0 LoRa (RFM95) — Minimal RX for JSON payloads w/ addressing
+// Feather M0 LoRa (RFM95) — Simple RX: receive JSON, append rssi_dbm, forward to Pi
 // Libs: RadioHead (RH_RF95)
-// Matches TX that sends: {"net":165,"node":1,"seq":N,"ts":...,"vbat":X,"t":Y,"rh":Z}
 
 #include <SPI.h>
 #include <RH_RF95.h>
+#include <ctype.h>
 
+// ------------ Build-time switches ------------
+// MODE: "serial" (debug prints + forward) or "wireless" (forward only)
+#define MODE "serial"
+
+// ------------ RFM95 wiring and radio params ------------
 #define RFM95_CS   8
 #define RFM95_RST  4
 #define RFM95_INT  3
 #define RF95_FREQ_MHZ 915.0
 
-// --- Addressing: must match the transmitter code ---
+// ------------ Addressing (must match TX) ------------
 #define MY_ADDR   0x42   // receiver's node ID (TX's DEST_ADDR)
-#define TX_ADDR   0x01   // expected transmitter "from"
-#define NET_ID    0xA5   // app-level net id inside JSON
 
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
-void hardResetRadio() {
+// ------------ Helpers for switches ------------
+static bool isSerialMode() { return strcmp(MODE, "serial") == 0; }
+
+// ------------ Radio reset ------------
+static void hardResetRadio() {
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST, HIGH); delay(10);
   digitalWrite(RFM95_RST, LOW);  delay(10);
   digitalWrite(RFM95_RST, HIGH); delay(10);
 }
 
-// Tiny/brittle JSON helpers: pull int/float after a key like "seq" or "t"
-static long jgetInt(const char* j, const char* key, long def=-1) {
-  char pat[12]; snprintf(pat, sizeof(pat), "\"%s\":", key);
-  const char* p = strstr(j, pat); if (!p) return def;
-  return strtol(p + strlen(pat), nullptr, 10);
-}
-static double jgetFloat(const char* j, const char* key, double def=NAN) {
-  char pat[12]; snprintf(pat, sizeof(pat), "\"%s\":", key);
-  const char* p = strstr(j, pat); if (!p) return def;
-  return strtod(p + strlen(pat), nullptr);
-}
-
-void setup() {
+// ------------ Boot / power-on sequence ------------
+static void powerOn() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
 
@@ -45,60 +41,81 @@ void setup() {
 
   hardResetRadio();
   if (!rf95.init()) {
+    // Blink forever if radio init fails
     while (1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(100); }
   }
 
   rf95.setFrequency(RF95_FREQ_MHZ);
-  rf95.setThisAddress(MY_ADDR);       // accept only packets "to" me (or broadcast)
+  rf95.setThisAddress(MY_ADDR);       // accept packets "to" me (or broadcast)
   // rf95.setModemConfig(RH_RF95::Bw125Cr45Sf128); // keep in sync w/ TX if you change it
   rf95.setModeRx();
 
-  Serial.print("RX ready @ "); Serial.print(RF95_FREQ_MHZ);
-  Serial.print(" MHz  addr=0x"); Serial.println(MY_ADDR, HEX);
+  // Optional LED pulse on boot
+  digitalWrite(LED_BUILTIN, HIGH); delay(40); digitalWrite(LED_BUILTIN, LOW);
+
+  if (isSerialMode()) {
+    Serial.print("RX ready @ "); Serial.print(RF95_FREQ_MHZ);
+    Serial.print(" MHz  addr=0x"); Serial.println(MY_ADDR, HEX);
+  }
 }
 
-void loop() {
+// Emit original JSON with an appended rssi_dbm field, without other modifications
+static void forwardJsonWithRssi(const char* json, int16_t rssiDbm) {
+  // Find the last non-space '}' and inject before it; else, emit raw JSON
+  size_t len = strlen(json);
+  size_t end = len;
+  while (end > 0 && isspace((unsigned char)json[end - 1])) end--;
+  if (end > 0 && json[end - 1] == '}') {
+    // Print everything up to before the closing brace
+    Serial.write((const uint8_t*)json, end - 1);
+    Serial.print(",\"rssi_dbm\":");
+    Serial.print((int)rssiDbm);
+    Serial.println("}");
+  } else {
+    // Fallback: emit as-is
+    Serial.println(json);
+  }
+}
+
+// ------------ Relay: receive and forward ------------
+static void relayData() {
   if (!rf95.available()) { delay(1); return; }
 
   uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
   uint8_t len = sizeof(buf);
-  if (!rf95.recv(buf, &len)) return;
+  if (!rf95.recv(buf, &len)) { rf95.setModeRx(); return; }
 
   if (len >= sizeof(buf)) len = sizeof(buf) - 1;
-  buf[len] = 0;                        // treat as C-string for parsing
+  buf[len] = 0;                        // treat as C-string for emission
   const char* json = (const char*)buf;
 
-  // RadioHead headers (already filtered by "to==MY_ADDR" unless broadcast)
+  // RadioHead headers and link quality
   uint8_t from = rf95.headerFrom();
   uint8_t to   = rf95.headerTo();
   uint8_t id   = rf95.headerId();
   int16_t rssi = rf95.lastRssi();
 
-  // Optional extra guards (cheap, easy to debug)
-  if (from != TX_ADDR) {               // not our expected TX; ignore quietly
-    rf95.setModeRx(); return;
+  // Forward: original JSON + appended rssi_dbm
+  forwardJsonWithRssi(json, rssi);
+
+  // Optional compact debug line
+  if (isSerialMode()) {
+    Serial.print("# from=0x"); Serial.print(from, HEX);
+    Serial.print(" to=0x");   Serial.print(to,   HEX);
+    Serial.print(" id=");     Serial.print(id);
+    Serial.print(" rssi=");   Serial.println(rssi);
   }
-  long net = jgetInt(json, "net", -1);
-  if (net != NET_ID) { rf95.setModeRx(); return; }
-
-  // Pull a few fields (brittle but readable); others remain in JSON
-  long   seq   = jgetInt(json, "seq", -1);
-  double vbat  = jgetFloat(json, "vbat", NAN);
-  double tC    = jgetFloat(json, "t", NAN);
-  double rhPct = jgetFloat(json, "rh", NAN);
-
-  // One-line log: seq, RSSI, vbat, t, rh, and raw JSON for eyeballing
-  Serial.print("ok seq="); Serial.print(seq);
-  Serial.print(" from=0x"); Serial.print(from, HEX);
-  Serial.print(" rssi=");   Serial.print(rssi);
-  Serial.print(" vbat=");   Serial.print(vbat, 3);
-  Serial.print(" tC=");     Serial.print(isnan(tC) ? NAN : tC, 2);
-  Serial.print(" rh=");     Serial.print(isnan(rhPct) ? NAN : rhPct, 2);
-  Serial.print(" id=");     Serial.print(id);          // headerId mirrors low byte of TX seq
-  Serial.print(" | ");      Serial.println(json);      // full payload for debug
 
   // Quick LED blip = packet activity
   digitalWrite(LED_BUILTIN, HIGH); delay(15); digitalWrite(LED_BUILTIN, LOW);
 
   rf95.setModeRx(); // stay in RX after handling packet
+}
+
+void setup() {
+  powerOn();
+}
+
+void loop() {
+  relayData();
 }
