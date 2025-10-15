@@ -1,0 +1,192 @@
+// Feather M0 LoRa (RFM95 @ 915 MHz) — JSON TX with SHT31 or Moisture + low power
+// HW: Feather M0 LoRa (RFM95)  | Pins: CS=8, RST=4, INT=3  | VBAT on A7 | Moisture on A1
+// Libs: RadioHead (RH_RF95), Adafruit_SleepyDog, Adafruit_SHT31
+
+#include <SPI.h>
+#include <Wire.h>
+#include <RH_RF95.h>
+#include <Adafruit_SleepyDog.h>
+#include <Adafruit_SHT31.h>
+
+#define NAME "test-tx"
+
+// ------------ Build-time switches ------------
+// MODE: "serial" (print + wireless) or "wireless" (wireless only)
+#define MODE "serial"
+// LED:  "on" to blink LED on transmit, "off" to skip
+#define LED_MODE "on"
+// SENSOR: "temp" for SHT31-D, "moisture" for capacitive moisture on A1
+#define SENSOR "moisture"
+
+
+// ------------ RFM95 wiring (Feather M0 LoRa default) ------------
+#define RFM95_CS   8
+#define RFM95_RST  4
+#define RFM95_INT  3
+
+// Moisture analog input
+#define MOISTURE_PIN A1
+
+// ------------ Radio params ------------
+#define RF95_FREQ_MHZ   915.0     // US ISM band
+#define RF95_TX_DBM     10        // 5–13 for bring-up; lower saves power
+#define SEND_INTERVAL_MS 15000UL  // extend for battery operation (e.g., 60_000+)
+
+// ------------ Addressing (RadioHead headers) ------------
+#define MY_ADDR    0x01           // this transmitter's node ID
+#define DEST_ADDR  0x42           // receiver's node ID
+#define NET_ID     0xA5           // app-level network ID (for debugging)
+
+RH_RF95 rf95(RFM95_CS, RFM95_INT);
+Adafruit_SHT31 sht31 = Adafruit_SHT31();
+
+static uint32_t seq = 0;
+
+// ------------ Helpers for switches ------------
+static bool isSerialMode() { return strcmp(MODE, "serial") == 0; }
+static bool isLedOn()      { return strcmp(LED_MODE, "on") == 0; }
+static bool useTempSensor(){ return strcmp(SENSOR, "temp") == 0; }
+static bool useMoistureSensor(){ return strcmp(SENSOR, "moisture") == 0; }
+
+// Feather M0 battery sense: A7 with 2:1 divider to 3.3V ADC ref
+static float readVBAT() {
+  analogReadResolution(12); // 0..4095 on SAMD21
+  uint16_t raw = analogRead(A7);
+  // Vbat = raw/4095 * 3.3V * 2 (divider)
+  return (raw * (3.3f / 4095.0f) * 2.0f);
+}
+
+static void hardResetRadio() {
+  pinMode(RFM95_RST, OUTPUT);
+  digitalWrite(RFM95_RST, HIGH); delay(10);
+  digitalWrite(RFM95_RST, LOW);  delay(10);
+  digitalWrite(RFM95_RST, HIGH); delay(10);
+}
+
+static void sleepFor(uint32_t ms) {
+  while (ms > 0) {
+    int s = Watchdog.sleep(ms);
+    if (s <= 0) break;
+    ms -= s;
+  }
+}
+
+// ------------ App organization: power on / measure / transmit ------------
+static void powerOn() {
+  // Optional debug UART in either mode (we may choose not to print later)
+  Serial.begin(115200);
+  while (!Serial && millis() < 3000) {}
+
+  // Sensors
+  if (useTempSensor()) {
+    Wire.begin();
+    if (!sht31.begin(0x44)) {
+      if (!sht31.begin(0x45)) {
+        if (isSerialMode()) Serial.println("SHT31 not found");
+      }
+    }
+    sht31.heater(false);
+  } else if (useMoistureSensor()) {
+    analogReadResolution(12);
+    pinMode(MOISTURE_PIN, INPUT);
+  }
+
+  // Radio init
+  hardResetRadio();
+  if (!rf95.init()) {
+    pinMode(LED_BUILTIN, OUTPUT);
+    if (isSerialMode()) Serial.println("RFM95 init failed");
+    while (1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(100); }
+  }
+
+  rf95.setFrequency(RF95_FREQ_MHZ);
+  rf95.setTxPower(RF95_TX_DBM, false); // PA_BOOST
+  // rf95.setModemConfig(RH_RF95::Bw125Cr48Sf4096); // For long range if needed
+
+  // Addressing & filtering
+  rf95.setThisAddress(MY_ADDR);
+  rf95.setHeaderFrom(MY_ADDR);
+
+  // Optional: LED pulse on boot
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH); delay(40); digitalWrite(LED_BUILTIN, LOW);
+}
+
+static void measure(char* json, size_t jsonSize) {
+  // Common readings
+  const float vbat = readVBAT();
+  const uint32_t ts = millis();
+
+  // Sensor readings
+  float tempC = NAN, rh = NAN;
+  int moisture = -1;
+
+  if (useTempSensor()) {
+    tempC = sht31.readTemperature();
+    rh    = sht31.readHumidity();
+  } else if (useMoistureSensor()) {
+    analogReadResolution(12);
+    moisture = analogRead(MOISTURE_PIN);
+  }
+
+  // Prepare field tokens (either numeric string or null)
+  char tBuf[16]; const char* tTok = "null";
+  char rhBuf[16]; const char* rhTok = "null";
+  char mBuf[16]; const char* mTok = "null";
+  if (!isnan(tempC)) { snprintf(tBuf, sizeof(tBuf), "%.2f", tempC); tTok = tBuf; }
+  if (!isnan(rh))    { snprintf(rhBuf, sizeof(rhBuf), "%.2f", rh);  rhTok = rhBuf; }
+  if (moisture >= 0) { snprintf(mBuf, sizeof(mBuf), "%d", moisture); mTok = mBuf; }
+
+  // Build compact JSON
+  // {"net":165,"node":1,"name":"x","seq":1,"ts":1,"vbat":4.12,"t":..,"rh":..,"moist":..}
+  int n = snprintf(
+    json, jsonSize,
+    "{\"net\":%u,\"node\":%u,\"name\":\"%s\",\"seq\":%lu,\"ts\":%lu,\"vbat\":%.3f,\"t\":%s,\"rh\":%s,\"moist\":%s}",
+    (unsigned)NET_ID,
+    (unsigned)MY_ADDR,
+    NAME,
+    (unsigned long)seq,
+    (unsigned long)ts,
+    vbat,
+    tTok,
+    rhTok,
+    mTok
+  );
+  if (n < 0 || (size_t)n >= jsonSize) {
+    strcpy(json, "{\"err\":\"pkt_ovf\"}");
+  }
+}
+
+static void transmit(const char* json) {
+  // Address headers (RadioHead)
+  rf95.setHeaderTo(DEST_ADDR);
+  rf95.setHeaderId((uint8_t)(seq & 0xFF));
+  rf95.setHeaderFlags(0x00);
+
+  // Send
+  rf95.send((const uint8_t*)json, strlen(json));
+  rf95.waitPacketSent();
+
+  // Blink on TX if enabled
+  if (isLedOn()) { digitalWrite(LED_BUILTIN, HIGH); delay(20); digitalWrite(LED_BUILTIN, LOW); }
+
+  // Optional serial log depending on mode
+  if (isSerialMode()) {
+    Serial.print("TX "); Serial.print(seq);
+    Serial.print(" -> "); Serial.print(DEST_ADDR, HEX);
+    Serial.print(" | "); Serial.println(json);
+  }
+}
+
+void setup() {
+  powerOn();
+}
+
+void loop() {
+  char json[192];
+  measure(json, sizeof(json));
+  transmit(json);
+  seq++;
+  rf95.sleep();
+  sleepFor(SEND_INTERVAL_MS);
+}
