@@ -6,8 +6,8 @@
 #include <ctype.h>
 
 // ------------ Build-time switches ------------
-// MODE: "serial" (debug prints + forward) or "wireless" (forward only)
-#define MODE "serial"
+// MODE: "dev" (debug prints + forward) or "prod" (forward only)
+#define MODE "dev"
 
 // ------------ RFM95 wiring and radio params ------------
 #define RFM95_CS   8
@@ -21,7 +21,7 @@
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
 // ------------ Helpers for switches ------------
-static bool isSerialMode() { return strcmp(MODE, "serial") == 0; }
+static bool isDevMode() { return strcmp(MODE, "dev") == 0; }
 
 // ------------ LED helpers ------------
 static void doubleFlashLed() {
@@ -56,10 +56,12 @@ static void powerOn() {
   // rf95.setModemConfig(RH_RF95::Bw125Cr45Sf128); // keep in sync w/ TX if you change it
   rf95.setModeRx();
 
-  // Optional LED pulse on boot
-  digitalWrite(LED_BUILTIN, HIGH); delay(40); digitalWrite(LED_BUILTIN, LOW);
+  // Optional LED pulse on boot (dev only)
+  if (isDevMode()) {
+    digitalWrite(LED_BUILTIN, HIGH); delay(40); digitalWrite(LED_BUILTIN, LOW);
+  }
 
-  if (isSerialMode()) {
+  if (isDevMode()) {
     Serial.print("RX ready @ "); Serial.print(RF95_FREQ_MHZ);
     Serial.print(" MHz  addr=0x"); Serial.println(MY_ADDR, HEX);
   }
@@ -105,18 +107,16 @@ static void relayData() {
   forwardJsonWithRssi(json, rssi);
 
   // Optional compact debug line
-  if (isSerialMode()) {
+  if (isDevMode()) {
     Serial.print("# from=0x"); Serial.print(from, HEX);
     Serial.print(" to=0x");   Serial.print(to,   HEX);
     Serial.print(" id=");     Serial.print(id);
     Serial.print(" rssi=");   Serial.println(rssi);
   }
 
-  // LED activity indication: double-flash in serial mode, single blip otherwise
-  if (isSerialMode()) {
+  // LED activity indication: dev only; no LED in prod
+  if (isDevMode()) {
     doubleFlashLed();
-  } else {
-    digitalWrite(LED_BUILTIN, HIGH); delay(15); digitalWrite(LED_BUILTIN, LOW);
   }
 
   rf95.setModeRx(); // stay in RX after handling packet

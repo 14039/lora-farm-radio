@@ -15,14 +15,14 @@
 #define NAME "test-tx-moisture"
 
 // Optional fixed GPS coordinates for sensor registration (set to NAN if unknown)
-#define GPS_LATITUDE   37.4219999
-#define GPS_LONGITUDE -122.0840575
+#define GPS_LATITUDE   44.839602
+#define GPS_LONGITUDE -122.777543
 
 
 // ------------ Build-time switches ------------
-// MODE: "serial" (print + wireless) or "wireless" (wireless only)
-#define MODE "serial"
-// LED:  "on" to blink LED on transmit, "off" to skip
+// MODE: "dev" (print + wireless) or "prod" (wireless only)
+#define MODE "dev"
+// LED:  "on" to blink LED on transmit in dev, no LEDs in prod
 #define LED_MODE "on"
 // SENSOR: "temp" for SHT31-D, "moisture" for capacitive moisture on A1
 #define SENSOR "moisture"
@@ -56,7 +56,7 @@ Adafruit_SHT31 sht31 = Adafruit_SHT31();
 static uint32_t seq = 0;
 
 // ------------ Helpers for switches ------------
-static bool isSerialMode() { return strcmp(MODE, "serial") == 0; }
+static bool isDevMode() { return strcmp(MODE, "dev") == 0; }
 static bool isLedOn()      { return strcmp(LED_MODE, "on") == 0; }
 static bool useTempSensor(){ return strcmp(SENSOR, "temp") == 0; }
 static bool useMoistureSensor(){ return strcmp(SENSOR, "moisture") == 0; }
@@ -92,16 +92,18 @@ static void sleepFor(uint32_t ms) {
 
 // ------------ App organization: power on / measure / transmit ------------
 static void powerOn() {
-  // Optional debug UART in either mode (we may choose not to print later)
-  Serial.begin(115200);
-  while (!Serial && millis() < 3000) {}
+  // Optional debug UART (dev only to save power in prod)
+  if (isDevMode()) {
+    Serial.begin(115200);
+    while (!Serial && millis() < 3000) {}
+  }
 
   // Sensors
   if (useTempSensor()) {
     Wire.begin();
     if (!sht31.begin(0x44)) {
       if (!sht31.begin(0x45)) {
-        if (isSerialMode()) Serial.println("SHT31 not found");
+    if (isDevMode()) Serial.println("SHT31 not found");
       }
     }
     sht31.heater(false);
@@ -114,21 +116,28 @@ static void powerOn() {
   hardResetRadio();
   if (!rf95.init()) {
     pinMode(LED_BUILTIN, OUTPUT);
-    if (isSerialMode()) Serial.println("RFM95 init failed");
-    while (1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(100); }
+    if (isDevMode()) Serial.println("RFM95 init failed");
+    if (isDevMode()) {
+      while (1) { digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); delay(100); }
+    } else {
+      while (1) { delay(1000); }
+    }
   }
 
   rf95.setFrequency(RF95_FREQ_MHZ);
-  rf95.setTxPower(RF95_TX_DBM, false); // PA_BOOST
+  // Lower TX power in prod to save energy (tune as needed)
+  rf95.setTxPower(isDevMode() ? RF95_TX_DBM : 5, false); // PA_BOOST
   // rf95.setModemConfig(RH_RF95::Bw125Cr48Sf4096); // For long range if needed
 
   // Addressing & filtering
   rf95.setThisAddress(MY_ADDR);
   rf95.setHeaderFrom(MY_ADDR);
 
-  // Optional: LED pulse on boot
+  // Optional: LED pulse on boot (dev only)
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH); delay(40); digitalWrite(LED_BUILTIN, LOW);
+  if (isDevMode()) {
+    digitalWrite(LED_BUILTIN, HIGH); delay(40); digitalWrite(LED_BUILTIN, LOW);
+  }
 }
 
 static void measure(char* json, size_t jsonSize) {
@@ -189,15 +198,13 @@ static void transmit(const char* json) {
   rf95.send((const uint8_t*)json, strlen(json));
   rf95.waitPacketSent();
 
-  // LED activity indication: double-flash in serial mode; otherwise follow LED_MODE
-  if (isSerialMode()) {
+  // LED activity indication: dev only; no LEDs in prod
+  if (isDevMode() && isLedOn()) {
     doubleFlashLed();
-  } else if (isLedOn()) {
-    digitalWrite(LED_BUILTIN, HIGH); delay(20); digitalWrite(LED_BUILTIN, LOW);
   }
 
-  // Optional serial log depending on mode
-  if (isSerialMode()) {
+  // Optional serial log (dev only)
+  if (isDevMode()) {
     Serial.print("TX "); Serial.print(seq);
     Serial.print(" -> "); Serial.print(DEST_ADDR, HEX);
     Serial.print(" | "); Serial.println(json);
