@@ -414,6 +414,15 @@ def main() -> int:
     def on_packet(pkt: Dict) -> None:
         sensor, reading = translate_packet(pkt)
         q.enqueue((sensor, reading))
+        try:
+            logger.info(
+                "Received datapoint from %s; queue_len=%d",
+                sensor.get("name", "unknown"),
+                len(q),
+            )
+        except Exception:
+            # Be resilient; logging should never break ingest
+            pass
 
     # Signal handling for graceful exit
     def _handle_signal(signum, frame):  # type: ignore[no-untyped-def]
@@ -432,12 +441,22 @@ def main() -> int:
 
     while not stop_event.is_set():
         try:
-            if db_is_reachable(cfg["db_url"], CONNECT_TIMEOUT_S):
+            logger.info("Connectivity check: testing reachability to AWS database…")
+            connected = db_is_reachable(cfg["db_url"], CONNECT_TIMEOUT_S)
+            logger.info(
+                "Connectivity check result: %s",
+                "connected" if connected else "disconnected",
+            )
+            if connected:
                 items = q.dequeue_batch(cfg["batch_size"])
                 if items:
                     try:
                         n = flush_queue(cfg["db_url"], items)
-                        logger.info("Flushed %d item(s); queue_len=%d", n, len(q))
+                        logger.info(
+                            "Uploaded %d measurement datapoint(s) to the server; queue_len=%d",
+                            n,
+                            len(q),
+                        )
                     except Exception as e:
                         logger.warning("Flush failed (%s); requeueing %d item(s)", e, len(items))
                         # Put items back at the front to retry later
