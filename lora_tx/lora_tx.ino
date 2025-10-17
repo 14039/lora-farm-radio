@@ -1,4 +1,4 @@
-// Feather M0 LoRa (RFM95 @ 915 MHz) — JSON TX with SHT31 or Moisture + low power
+// Feather M0 LoRa (RFM95 @ 915 MHz) — JSON TX with SHT31 or soil moisture + low power
 // HW: Feather M0 LoRa (RFM95)  | Pins: CS=8, RST=4, INT=3  | VBAT on A7 | Moisture on A1
 // Libs: RadioHead (RH_RF95), Adafruit_SleepyDog, Adafruit_SHT31
 
@@ -12,7 +12,7 @@
 
 // ------------ Sensor identity ------------
 #define SENSOR_ID 1
-#define NAME "dev-moisture"
+#define NAME "dev-soil"
 
 // Optional fixed GPS coordinates for sensor registration (set to NAN if unknown)
 #define GPS_LATITUDE   44.839602
@@ -24,8 +24,11 @@
 #define MODE "dev"
 // LED:  "on" to blink LED on transmit in dev, no LEDs in prod
 #define LED_MODE "on"
-// SENSOR: "temp" for SHT31-D, "moisture" for capacitive moisture on A1
-#define SENSOR "moisture"
+// SENSOR: must be one of "temperature", "soil", or "camera"
+// - "temperature": use SHT31-D temperature/humidity sensor
+// - "soil":        use capacitive soil moisture sensor on A1
+// - "camera":      reserved for camera-triggered node (no onboard reading here)
+#define SENSOR "soil"
 
 
 // Here's what the output looks like:
@@ -37,8 +40,8 @@
 #define RFM95_RST  4
 #define RFM95_INT  3
 
-// Moisture analog input
-#define MOISTURE_PIN A1
+// Soil moisture analog input
+#define SOIL_PIN A1
 
 // ------------ Radio params ------------
 #define RF95_FREQ_MHZ   915.0     // US ISM band
@@ -58,8 +61,8 @@ static uint32_t seq = 0;
 // ------------ Helpers for switches ------------
 static bool isDevMode() { return strcmp(MODE, "dev") == 0; }
 static bool isLedOn()      { return strcmp(LED_MODE, "on") == 0; }
-static bool useTempSensor(){ return strcmp(SENSOR, "temp") == 0; }
-static bool useMoistureSensor(){ return strcmp(SENSOR, "moisture") == 0; }
+static bool useTempSensor(){ return strcmp(SENSOR, "temperature") == 0; }
+static bool useSoilSensor(){ return strcmp(SENSOR, "soil") == 0; }
 
 // ------------ LED helpers ------------
 static void doubleFlashLed() {
@@ -107,9 +110,9 @@ static void powerOn() {
       }
     }
     sht31.heater(false);
-  } else if (useMoistureSensor()) {
+  } else if (useSoilSensor()) {
     analogReadResolution(12);
-    pinMode(MOISTURE_PIN, INPUT);
+    pinMode(SOIL_PIN, INPUT);
   }
 
   // Radio init
@@ -147,14 +150,14 @@ static void measure(char* json, size_t jsonSize) {
 
   // Sensor readings
   float tempC = NAN, rh = NAN;
-  int moisture = -1;
+  int soilCap = -1;
 
   if (useTempSensor()) {
     tempC = sht31.readTemperature();
     rh    = sht31.readHumidity();
-  } else if (useMoistureSensor()) {
+  } else if (useSoilSensor()) {
     analogReadResolution(12);
-    moisture = analogRead(MOISTURE_PIN);
+    soilCap = analogRead(SOIL_PIN);
   }
 
   // Prepare field tokens (either numeric string or null)
@@ -163,17 +166,18 @@ static void measure(char* json, size_t jsonSize) {
   char mBuf[16];    const char* capacitanceTok = "null";
   if (!isnan(tempC)) { snprintf(tempBuf, sizeof(tempBuf), "%.2f", tempC); temperatureTok = tempBuf; }
   if (!isnan(rh))    { snprintf(rhBuf,  sizeof(rhBuf),  "%.2f", rh);  humidityTok    = rhBuf; }
-  if (moisture >= 0) { snprintf(mBuf,   sizeof(mBuf),   "%d",   moisture); capacitanceTok = mBuf; }
+  if (soilCap >= 0)  { snprintf(mBuf,   sizeof(mBuf),   "%d",   soilCap); capacitanceTok = mBuf; }
 
   // Build compact JSON
-  // {"net":165,"sensor_id":1,"name":"x","sequence":1,"millis_since_boot":1,"battery_v":4.12,
+  // {"net":165,"sensor_id":1,"name":"x","sensor_type":"soil","sequence":1,"millis_since_boot":1,"battery_v":4.12,
   //  "temperature_c":..,"humidity_pct":..,"capacitance_val":..,"gps_lat":..,"gps_long":..}
   int n = snprintf(
     json, jsonSize,
-    "{\"net\":%u,\"sensor_id\":%u,\"name\":\"%s\",\"sequence\":%lu,\"millis_since_boot\":%lu,\"battery_v\":%.3f,\"temperature_c\":%s,\"humidity_pct\":%s,\"capacitance_val\":%s,\"gps_lat\":%.7f,\"gps_long\":%.7f}",
+    "{\"net\":%u,\"sensor_id\":%u,\"name\":\"%s\",\"sensor_type\":\"%s\",\"sequence\":%lu,\"millis_since_boot\":%lu,\"battery_v\":%.3f,\"temperature_c\":%s,\"humidity_pct\":%s,\"capacitance_val\":%s,\"gps_lat\":%.7f,\"gps_long\":%.7f}",
     (unsigned)NET_ID,
     (unsigned)SENSOR_ID,
     NAME,
+    SENSOR,
     (unsigned long)seq,
     (unsigned long)millisSinceBoot,
     vbat,

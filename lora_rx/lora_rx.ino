@@ -1,4 +1,6 @@
 // Feather M0 LoRa (RFM95) — Simple RX: receive JSON, append rssi_dbm, forward to Pi
+// The TX now includes a "sensor_type" field (one of "temperature", "soil", "camera").
+// RX preserves the original JSON fields (including sensor_type) and only appends rssi_dbm.
 // Libs: RadioHead (RH_RF95)
 
 #include <SPI.h>
@@ -68,6 +70,7 @@ static void powerOn() {
 }
 
 // Emit original JSON with an appended rssi_dbm field, without other modifications
+// (preserves fields like sensor_type exactly as sent by TX)
 static void forwardJsonWithRssi(const char* json, int16_t rssiDbm) {
   // Find the last non-space '}' and inject before it; else, emit raw JSON
   size_t len = strlen(json);

@@ -21,7 +21,7 @@ Configuration (environment variables):
   - DATABASE_URL: Postgres connection URL (required)
   - SERIAL_PORT: Explicit serial path (e.g., /dev/ttyACM0). If unset, auto-detects
   - SERIAL_BAUD: Baud rate (default 115200)
-  - SENSOR_TYPE: Default sensor type for registration (default "temperature")
+  
   - DEFAULT_LAT: Default sensor latitude if not present in packet (float, optional)
   - DEFAULT_LON: Default sensor longitude if not present in packet (float, optional)
   - BATCH_SIZE: Max items to flush per cycle (default 500)
@@ -65,7 +65,6 @@ except Exception as e:  # pragma: no cover
 
 # ---------------------- Configuration ----------------------
 DEFAULT_BAUD = int(os.getenv("SERIAL_BAUD", "115200"))
-DEFAULT_SENSOR_TYPE = os.getenv("SENSOR_TYPE", "temperature")
 DEFAULT_LAT_ENV = os.getenv("DEFAULT_LAT")
 DEFAULT_LON_ENV = os.getenv("DEFAULT_LON")
 DEFAULT_LAT = float(DEFAULT_LAT_ENV) if DEFAULT_LAT_ENV else None
@@ -169,10 +168,13 @@ def translate_packet(pkt: Dict) -> Tuple[Dict, Dict]:
     lat = gps_lat if isinstance(gps_lat, (int, float)) else DEFAULT_LAT
     lon = gps_long if isinstance(gps_long, (int, float)) else DEFAULT_LON
 
+    # Use sensor_type from packet if provided; otherwise leave it empty (None)
+    sensor_type_val = pkt.get("sensor_type") if isinstance(pkt.get("sensor_type"), str) else None
+
     sensor = {
         "hardware_id": hardware_id,
         "name": name,
-        "sensor_type": DEFAULT_SENSOR_TYPE,
+        "sensor_type": sensor_type_val,
         "gps_latitude": lat,
         "gps_longitude": lon,
         "metadata": {
