@@ -1,19 +1,24 @@
 [Unit]
-Description=Porter DB Tunnel (farm-db)
+Description=Porter datastore tunnel to farm-db
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-Environment=HOME=/home/starfarm
-WorkingDirectory=/home/starfarm
-ExecStart=/bin/bash -lc 'porter datastore connect farm-db'
-Restart=always
-RestartSec=5
 User=starfarm
+Environment=HOME=/home/starfarm
+WorkingDirectory=/home/starfarm/code/lora-farm-radio
+# Keep the local port stable so DATABASE_URL stays stable.
+Environment=PORTER_TUNNEL_PORT=8122
+# Non-interactive launch of the tunnel. The CLI keeps running until stopped.
+ExecStart=/usr/bin/env bash -lc 'porter datastore connect farm-db --port "${PORTER_TUNNEL_PORT}"'
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=0
+# Journal logs only
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-
-
 
