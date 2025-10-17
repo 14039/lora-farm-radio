@@ -1,4 +1,13 @@
-Notes: Rasp Pi at "ssh starfarm@192.168.1.216" -- try "ping 192.168.1.216" beforehand optionally.
+Notes: Rasp Pi #1 is at "ssh starfarm@192.168.1.216" -- try "ping 192.168.1.216" beforehand optionally. (PW: 1245)
+Rasp Pi #2 is at: 
+- Device: Raspberry Pi
+- Hostname: farm-pi-2.local
+- Username: nate
+- Password: 1245
+- Wi-Fi SSID: Kernel
+- Wi-Fi password: "tajmahal"
+- SSH: enabled
+- SSH authentication: password (public-key only: disabled)
 
 The project is a wireless communciation project:
 

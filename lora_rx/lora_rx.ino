@@ -23,6 +23,12 @@ RH_RF95 rf95(RFM95_CS, RFM95_INT);
 // ------------ Helpers for switches ------------
 static bool isSerialMode() { return strcmp(MODE, "serial") == 0; }
 
+// ------------ LED helpers ------------
+static void doubleFlashLed() {
+  digitalWrite(LED_BUILTIN, HIGH); delay(30); digitalWrite(LED_BUILTIN, LOW); delay(30);
+  digitalWrite(LED_BUILTIN, HIGH); delay(30); digitalWrite(LED_BUILTIN, LOW);
+}
+
 // ------------ Radio reset ------------
 static void hardResetRadio() {
   pinMode(RFM95_RST, OUTPUT);
@@ -106,8 +112,12 @@ static void relayData() {
     Serial.print(" rssi=");   Serial.println(rssi);
   }
 
-  // Quick LED blip = packet activity
-  digitalWrite(LED_BUILTIN, HIGH); delay(15); digitalWrite(LED_BUILTIN, LOW);
+  // LED activity indication: double-flash in serial mode, single blip otherwise
+  if (isSerialMode()) {
+    doubleFlashLed();
+  } else {
+    digitalWrite(LED_BUILTIN, HIGH); delay(15); digitalWrite(LED_BUILTIN, LOW);
+  }
 
   rf95.setModeRx(); // stay in RX after handling packet
 }

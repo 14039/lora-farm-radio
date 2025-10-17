@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+# THIS FILE IS DEPRECATED. FOR REFERNCE ONLY. SEE log_to_aws.py FOR THE CURRENT VERSION.
+
 """
 Raspberry Pi serial-to-Google Sheets uploader for LoRa RX (Feather M0).
 

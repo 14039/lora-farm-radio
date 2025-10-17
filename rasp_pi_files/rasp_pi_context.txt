@@ -1,0 +1,3 @@
+# Feather RX serial device path
+/dev/ttyACM0
+

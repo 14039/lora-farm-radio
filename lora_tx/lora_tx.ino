@@ -12,7 +12,7 @@
 
 // ------------ Sensor identity ------------
 #define SENSOR_ID 1
-#define NAME "test-tx"
+#define NAME "test-tx-moisture"
 
 // Optional fixed GPS coordinates for sensor registration (set to NAN if unknown)
 #define GPS_LATITUDE   37.4219999
@@ -60,6 +60,12 @@ static bool isSerialMode() { return strcmp(MODE, "serial") == 0; }
 static bool isLedOn()      { return strcmp(LED_MODE, "on") == 0; }
 static bool useTempSensor(){ return strcmp(SENSOR, "temp") == 0; }
 static bool useMoistureSensor(){ return strcmp(SENSOR, "moisture") == 0; }
+
+// ------------ LED helpers ------------
+static void doubleFlashLed() {
+  digitalWrite(LED_BUILTIN, HIGH); delay(30); digitalWrite(LED_BUILTIN, LOW); delay(30);
+  digitalWrite(LED_BUILTIN, HIGH); delay(30); digitalWrite(LED_BUILTIN, LOW);
+}
 
 // Feather M0 battery sense: A7 with 2:1 divider to 3.3V ADC ref
 static float readVBAT() {
@@ -183,8 +189,12 @@ static void transmit(const char* json) {
   rf95.send((const uint8_t*)json, strlen(json));
   rf95.waitPacketSent();
 
-  // Blink on TX if enabled
-  if (isLedOn()) { digitalWrite(LED_BUILTIN, HIGH); delay(20); digitalWrite(LED_BUILTIN, LOW); }
+  // LED activity indication: double-flash in serial mode; otherwise follow LED_MODE
+  if (isSerialMode()) {
+    doubleFlashLed();
+  } else if (isLedOn()) {
+    digitalWrite(LED_BUILTIN, HIGH); delay(20); digitalWrite(LED_BUILTIN, LOW);
+  }
 
   // Optional serial log depending on mode
   if (isSerialMode()) {
