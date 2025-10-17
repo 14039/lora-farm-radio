@@ -17,8 +17,20 @@ if [ -z "${SERIAL_PORT:-}" ] && [ -f "$SCRIPT_DIR/rasp_pi_context.txt" ]; then
   export SERIAL_PORT
 fi
 
-# Activate a local venv if present
-[ -f "$ROOT_DIR/venv/bin/activate" ] && . "$ROOT_DIR/venv/bin/activate"
+# Ensure a local venv and required deps
+if [ ! -f "$ROOT_DIR/venv/bin/activate" ]; then
+  python3 -m venv "$ROOT_DIR/venv"
+fi
+. "$ROOT_DIR/venv/bin/activate"
+python - <<'PY' || pip install --upgrade pip setuptools wheel && pip install pyserial 'psycopg[binary]>=3.1'
+try:
+    import serial, psycopg  # noqa: F401
+    import sys
+    sys.exit(0)
+except Exception:
+    import sys
+    sys.exit(1)
+PY
 
 cd "$ROOT_DIR"
 exec python3 "$ROOT_DIR/log_to_aws.py"

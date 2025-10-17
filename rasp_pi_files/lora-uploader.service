@@ -1,0 +1,19 @@
+[Unit]
+Description=LoRa Farm Uploader
+Wants=network-online.target
+After=network-online.target porter-tunnel.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/starfarm/code/lora-farm-radio
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -lc '/home/starfarm/code/lora-farm-radio/rasp_pi_files/run_logger.sh'
+Restart=always
+RestartSec=5
+User=starfarm
+
+[Install]
+WantedBy=multi-user.target
+
+
+
