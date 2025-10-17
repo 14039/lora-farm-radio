@@ -12,7 +12,7 @@
 
 // ------------ Sensor identity ------------
 #define SENSOR_ID 1
-#define NAME "test-tx-moisture"
+#define NAME "dev-moisture"
 
 // Optional fixed GPS coordinates for sensor registration (set to NAN if unknown)
 #define GPS_LATITUDE   44.839602
