@@ -6,19 +6,18 @@ After=network-online.target
 [Service]
 Type=simple
 User=starfarm
+Group=starfarm
 Environment=HOME=/home/starfarm
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/home/starfarm/code/lora-farm-radio
 # Keep the local port stable so DATABASE_URL stays stable.
 Environment=PORTER_TUNNEL_PORT=8122
-# Non-interactive launch of the tunnel. The CLI keeps running until stopped.
-ExecStart=/usr/bin/env bash -lc 'porter datastore connect farm-db --port "${PORTER_TUNNEL_PORT}"'
+# Foreground tunnel; Porter keeps this process alive.
+ExecStart=/usr/bin/env bash -lc 'exec porter datastore connect farm-db --port "${PORTER_TUNNEL_PORT}"'
 Restart=always
-RestartSec=3
-StartLimitIntervalSec=0
-# Journal logs only
+RestartSec=5s
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-

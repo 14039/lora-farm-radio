@@ -1,40 +1,27 @@
 [Unit]
 Description=LoRa serial → AWS uploader
-Requires=porter-tunnel.service
 Wants=network-online.target
 After=network-online.target porter-tunnel.service
 
 [Service]
 Type=simple
 User=starfarm
+Group=dialout
 Environment=HOME=/home/starfarm
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/home/starfarm/code/lora-farm-radio
-# defaults for the readiness probe and for env.sh expansion
+
+# Optional, for consistency if env.sh references them
 Environment=PORTER_TUNNEL_HOST=127.0.0.1
 Environment=PORTER_TUNNEL_PORT=8122
-Environment=PYTHONUNBUFFERED=1
 
-# Robust readiness probe: wait up to 45s until TCP connects
-ExecStartPre=/usr/bin/env bash -lc 'python3 - << "PY"
-import os, socket, time, sys
-host=os.environ.get("PORTER_TUNNEL_HOST","127.0.0.1")
-port=int(os.environ.get("PORTER_TUNNEL_PORT","8122"))
-deadline=time.time()+45
-while time.time()<deadline:
-    try:
-        with socket.create_connection((host, port), timeout=1.0):
-            sys.exit(0)
-    except OSError:
-        time.sleep(1)
-print("DB tunnel not ready after 45s", file=sys.stderr)
-sys.exit(1)
-PY'
-
-# Call the same runner you use in dev; it sources rasp_pi_files/env.sh
-ExecStart=/usr/bin/env bash -lc 'bash /home/starfarm/code/lora-farm-radio/rasp_pi_files/run_logger.sh'
+# No ExecStartPre wait loop: the Python handles reachability and queues data.
+ExecStart=/usr/bin/env bash -lc '/home/starfarm/code/lora-farm-radio/rasp_pi_files/run_logger.sh'
 
 Restart=always
-RestartSec=5
+RestartSec=5s
+# Give it time to stop cleanly on shutdown if needed
+TimeoutStopSec=15s
 StandardOutput=journal
 StandardError=journal
 
