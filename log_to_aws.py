@@ -21,15 +21,20 @@ Configuration (environment variables):
   - DATABASE_URL: Postgres connection URL (required)
   - SERIAL_PORT: Explicit serial path (e.g., /dev/ttyACM0). If unset, auto-detects
   - SERIAL_BAUD: Baud rate (default 115200)
-  
+
   - DEFAULT_LAT: Default sensor latitude if not present in packet (float, optional)
   - DEFAULT_LON: Default sensor longitude if not present in packet (float, optional)
-  - BATCH_SIZE: Max items to flush per cycle (default 500)
+  - BATCH_SIZE: Max items to flush per cycle (default 5000)
   - TICK_SECONDS: Main loop tick interval (default 90)
   - CONNECT_TIMEOUT_S: DB connect timeout seconds for reachability checks (default 5)
 
+  # BLE relay control (Raspberry Pi / Linux):
+  - STARLINK_UPTIME_MINS: minutes ON (float; 0 disables)
+  - STARLINK_DOWNTIME_MINS: minutes OFF (float; 0 disables)
+  - DSD_DEVICE_MAC: Bluetooth MAC of the DSD TECH relay (required to enable BLE control)
+  - DSD_PASSWORD: relay password (int or 0x hex). Default 1234.
 Dependencies:
-  pip install pyserial psycopg[binary]>=3.1
+  pip install pyserial psycopg[binary]>=3.1 bleak
 """
 
 import os
@@ -40,6 +45,7 @@ import glob
 import logging
 import signal
 import threading
+import asyncio
 from collections import deque
 from datetime import datetime, timezone
 from typing import Callable, Deque, Dict, List, Optional, Tuple
@@ -69,7 +75,7 @@ DEFAULT_LAT_ENV = os.getenv("DEFAULT_LAT")
 DEFAULT_LON_ENV = os.getenv("DEFAULT_LON")
 DEFAULT_LAT = float(DEFAULT_LAT_ENV) if DEFAULT_LAT_ENV else None
 DEFAULT_LON = float(DEFAULT_LON_ENV) if DEFAULT_LON_ENV else None
-DEFAULT_BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))
+DEFAULT_BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5000"))
 DEFAULT_TICK_SECONDS = float(os.getenv("TICK_SECONDS", "90"))
 CONNECT_TIMEOUT_S = int(os.getenv("CONNECT_TIMEOUT_S", "5"))
 
@@ -81,6 +87,103 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%SZ",
 )
 logger = logging.getLogger("lora-aws")
+
+
+# ---------------------- BLE Starlink relay (bare-bones) ----------------------
+# Uses Bleak on Linux/BlueZ. Device is addressed by MAC on Linux.
+# Service/Characteristic and frame format match dsdtech_switch_test.py (FFE0/FFE1).
+# Immediate ON (0x01) and OFF (0x02) only.
+
+try:
+    from bleak import BleakClient, BleakScanner  # bleak is async BLE GATT client
+except Exception:
+    BleakClient = None
+    BleakScanner = None
+
+DSD_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
+DSD_CHAR_UUID    = "0000ffe1-0000-1000-8000-00805f9b34fb"
+
+def _parse_pwd(env_val: Optional[str]) -> int:
+    if not env_val:
+        return 0x04D2  # 1234
+    try:
+        return int(env_val, 16) & 0xFFFF if env_val.lower().startswith("0x") else int(env_val) & 0xFFFF
+    except Exception:
+        return 0x04D2
+
+def _frame(password: int, opcode: int, content: bytes) -> bytes:
+    # [0xA1][pwd_hi][pwd_lo][opcode][content...][xor][0xAA]
+    pkt = bytearray([0xA1, (password >> 8) & 0xFF, password & 0xFF, opcode])
+    pkt.extend(content)
+    x = 0
+    for b in pkt:
+        x ^= b
+    pkt.extend([x, 0xAA])
+    return bytes(pkt)
+
+def _on_now(password: int, channel: int = 0x01) -> bytes:
+    return _frame(password, 0x01, bytes([channel]))
+
+def _off_now(password: int, channel: int = 0x01) -> bytes:
+    return _frame(password, 0x02, bytes([channel]))
+
+async def _bt_switch_loop(uptime_m: float, downtime_m: float, mac: str, password: int, stop_event: threading.Event) -> None:
+    if BleakClient is None or BleakScanner is None:
+        logger.warning("BLE: bleak not installed; Starlink relay control disabled")
+        return
+    if not mac:
+        logger.warning("BLE: DSD_DEVICE_MAC is not set; Starlink relay control disabled")
+        return
+    # Allow fractional minutes (e.g., 10s = 0.1667)
+    uptime_s = max(0.1, float(uptime_m) * 60.0)
+    downtime_s = max(0.1, float(downtime_m) * 60.0)
+
+    while not stop_event.is_set():
+        try:
+            dev = await BleakScanner.find_device_by_address(mac, timeout=15.0)
+            if not dev:
+                logger.info("BLE: relay %s not found; retry in 3s", mac)
+                await asyncio.sleep(3.0)
+                continue
+
+            logger.info("BLE: connecting to DSD TECH at %s", mac)
+            async with BleakClient(dev) as client:
+                logger.info("BLE: connected; starting ON/OFF schedule")
+                while not stop_event.is_set():
+                    # ON phase
+                    await client.write_gatt_char(DSD_CHAR_UUID, _on_now(password), response=True)
+                    logger.info("BLE: relay ON for %.1f sec", uptime_s)
+                    await asyncio.sleep(uptime_s)
+                    if stop_event.is_set():
+                        break
+                    # OFF phase
+                    await client.write_gatt_char(DSD_CHAR_UUID, _off_now(password), response=True)
+                    logger.info("BLE: relay OFF for %.1f sec", downtime_s)
+                    await asyncio.sleep(downtime_s)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning("BLE: error/disconnect: %s; retry in 3s", e)
+            await asyncio.sleep(3.0)
+
+def start_bt_switcher(starlink_uptime_mins: float, starlink_downtime_mins: float, mac: Optional[str], password: int, stop_event: threading.Event) -> Optional[threading.Thread]:
+    if starlink_uptime_mins <= 0 or starlink_downtime_mins <= 0 or not mac:
+        logger.info("BLE: switcher disabled (check STARLINK_* mins and DSD_DEVICE_MAC)")
+        return None
+
+    logger.info(
+        "BLE: starting switcher thread mac=%s up=%.3f min down=%.3f min",
+        mac,
+        starlink_uptime_mins,
+        starlink_downtime_mins,
+    )
+
+    def _runner():
+        asyncio.run(_bt_switch_loop(starlink_uptime_mins, starlink_downtime_mins, mac, password, stop_event))
+
+    t = threading.Thread(target=_runner, name="starlink-ble", daemon=True)
+    t.start()
+    return t
 
 
 # ---------------------- Serial helpers ----------------------
@@ -340,10 +443,6 @@ class InMemoryQueue:
             return len(self._q)
 
 
-# ---------------------- LED notifier (optional) ----------------------
- # (LED notifier removed)
-
-
 # ---------------------- Serial ingest thread ----------------------
 def start_serial_reader(
     serial_path: str,
@@ -397,6 +496,12 @@ def load_config() -> Dict:
         "baud": DEFAULT_BAUD,
         "batch_size": DEFAULT_BATCH_SIZE,
         "tick_seconds": DEFAULT_TICK_SECONDS,
+
+        # BLE relay control
+        "starlink_uptime_mins": float(os.getenv("STARLINK_UPTIME_MINS", "0")),
+        "starlink_downtime_mins": float(os.getenv("STARLINK_DOWNTIME_MINS", "0")),
+        "dsd_device_mac": os.getenv("DSD_DEVICE_MAC"),  # REQUIRED on Linux to enable
+        "dsd_password": _parse_pwd(os.getenv("DSD_PASSWORD")),
     }
     return cfg
 
@@ -417,8 +522,6 @@ def main() -> int:
     q = InMemoryQueue()
     stop_event = threading.Event()
 
-    # (LED notifier initialization removed)
-
     def on_packet(pkt: Dict) -> None:
         sensor, reading = translate_packet(pkt)
         q.enqueue((sensor, reading))
@@ -429,7 +532,6 @@ def main() -> int:
                 len(q),
             )
         except Exception:
-            # Be resilient; logging should never break ingest
             pass
 
     # Signal handling for graceful exit
@@ -441,6 +543,24 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
 
     start_serial_reader(serial_path, cfg["baud"], on_packet, stop_event)
+
+    # Start BLE Starlink switcher (if enabled by env)
+    try:
+        logger.info(
+            "BLE: config mac=%s up=%.3f min down=%.3f min",
+            cfg["dsd_device_mac"],
+            cfg["starlink_uptime_mins"],
+            cfg["starlink_downtime_mins"],
+        )
+        start_bt_switcher(
+            cfg["starlink_uptime_mins"],
+            cfg["starlink_downtime_mins"],
+            cfg["dsd_device_mac"],
+            cfg["dsd_password"],
+            stop_event,
+        )
+    except Exception as e:
+        logger.warning("BLE: failed to start switcher: %s", e)
 
     logger.info(
         "Uploader started: batch_size=%s tick=%.1fs",
@@ -465,10 +585,8 @@ def main() -> int:
                             n,
                             len(q),
                         )
-                        # (LED flash on successful flush removed)
                     except Exception as e:
                         logger.warning("Flush failed (%s); requeueing %d item(s)", e, len(items))
-                        # Put items back at the front to retry later
                         for it in reversed(items):
                             q.enqueue(it)
                         time.sleep(2.0)
@@ -482,11 +600,8 @@ def main() -> int:
             time.sleep(1.0)
 
     logger.info("Exiting")
-    # (LED cleanup removed)
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-
-

@@ -22,18 +22,26 @@ if [ ! -f "$ROOT_DIR/venv/bin/activate" ]; then
   python3 -m venv "$ROOT_DIR/venv"
 fi
 . "$ROOT_DIR/venv/bin/activate"
-python - <<'PY' || pip install --upgrade pip setuptools wheel && pip install pyserial 'psycopg[binary]>=3.1' RPi.GPIO
+python - <<'PY' || pip install --upgrade pip setuptools wheel && pip install pyserial 'psycopg[binary]>=3.1' bleak RPi.GPIO
+import sys
+missing = []
 try:
-    import serial, psycopg  # noqa: F401
-    try:
-        import RPi.GPIO  # noqa: F401
-    except Exception:
-        pass
-    import sys
-    sys.exit(0)
+    import serial  # noqa: F401
 except Exception:
-    import sys
+    missing.append('pyserial')
+try:
+    import psycopg  # noqa: F401
+except Exception:
+    missing.append('psycopg')
+try:
+    import bleak  # noqa: F401
+except Exception:
+    missing.append('bleak')
+# RPi.GPIO is optional; don't require it
+if missing:
+    print('Missing deps:', ', '.join(missing))
     sys.exit(1)
+sys.exit(0)
 PY
 
 cd "$ROOT_DIR"
