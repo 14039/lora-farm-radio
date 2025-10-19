@@ -148,17 +148,17 @@ async def _bt_switch_loop(uptime_m: float, downtime_m: float, mac: str, password
 
             logger.info("BLE: connecting to DSD TECH at %s", mac)
             async with BleakClient(dev) as client:
-                logger.info("BLE: connected; starting ON/OFF schedule")
+                logger.info("BLE: connected; starting power schedule (ON then OFF)")
                 while not stop_event.is_set():
-                    # ON phase
-                    await client.write_gatt_char(DSD_CHAR_UUID, _on_now(password), response=True)
-                    logger.info("BLE: relay ON for %.1f sec", uptime_s)
+                    # Power ON phase (relay OFF in current wiring)
+                    await client.write_gatt_char(DSD_CHAR_UUID, _off_now(password), response=True)
+                    logger.info("BLE: power ON for %.1f sec", uptime_s)
                     await asyncio.sleep(uptime_s)
                     if stop_event.is_set():
                         break
-                    # OFF phase
-                    await client.write_gatt_char(DSD_CHAR_UUID, _off_now(password), response=True)
-                    logger.info("BLE: relay OFF for %.1f sec", downtime_s)
+                    # Power OFF phase (relay ON in current wiring)
+                    await client.write_gatt_char(DSD_CHAR_UUID, _on_now(password), response=True)
+                    logger.info("BLE: power OFF for %.1f sec", downtime_s)
                     await asyncio.sleep(downtime_s)
         except asyncio.CancelledError:
             break
