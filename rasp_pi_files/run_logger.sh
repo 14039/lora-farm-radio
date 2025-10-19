@@ -22,9 +22,13 @@ if [ ! -f "$ROOT_DIR/venv/bin/activate" ]; then
   python3 -m venv "$ROOT_DIR/venv"
 fi
 . "$ROOT_DIR/venv/bin/activate"
-python - <<'PY' || pip install --upgrade pip setuptools wheel && pip install pyserial 'psycopg[binary]>=3.1'
+python - <<'PY' || pip install --upgrade pip setuptools wheel && pip install pyserial 'psycopg[binary]>=3.1' RPi.GPIO
 try:
     import serial, psycopg  # noqa: F401
+    try:
+        import RPi.GPIO  # noqa: F401
+    except Exception:
+        pass
     import sys
     sys.exit(0)
 except Exception:
