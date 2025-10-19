@@ -16,7 +16,7 @@ export DSD_DEVICE_MAC="C8:47:80:59:E1:27"
 # 1234 is the default device password
 export DSD_PASSWORD="1234"
 # Schedule in minutes (decimals allowed). 10s = 0.1667, 4s = 0.0667
-export STARLINK_UPTIME_MINS="90"   # 45 min OFF
-export STARLINK_DOWNTIME_MINS="15" # 5 min ON. -NOTE THESE ARE BACKWARADS DUE TO HARDWARE - DO NOT CHANGE FOR NOW
+export STARLINK_UPTIME_MINS="15"   
+export STARLINK_DOWNTIME_MINS="90" 
 
 # Optional: LED notifier on successful DB flush (feature removed; keep unset)
