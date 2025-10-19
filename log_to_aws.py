@@ -340,6 +340,10 @@ class InMemoryQueue:
             return len(self._q)
 
 
+# ---------------------- LED notifier (optional) ----------------------
+ # (LED notifier removed)
+
+
 # ---------------------- Serial ingest thread ----------------------
 def start_serial_reader(
     serial_path: str,
@@ -413,6 +417,8 @@ def main() -> int:
     q = InMemoryQueue()
     stop_event = threading.Event()
 
+    # (LED notifier initialization removed)
+
     def on_packet(pkt: Dict) -> None:
         sensor, reading = translate_packet(pkt)
         q.enqueue((sensor, reading))
@@ -459,6 +465,7 @@ def main() -> int:
                             n,
                             len(q),
                         )
+                        # (LED flash on successful flush removed)
                     except Exception as e:
                         logger.warning("Flush failed (%s); requeueing %d item(s)", e, len(items))
                         # Put items back at the front to retry later
@@ -475,6 +482,7 @@ def main() -> int:
             time.sleep(1.0)
 
     logger.info("Exiting")
+    # (LED cleanup removed)
     return 0
 
 
