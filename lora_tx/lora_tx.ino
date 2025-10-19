@@ -11,12 +11,14 @@
 
 
 // ------------ Sensor identity ------------
-#define SENSOR_ID 1
-#define NAME "dev-soil"
+#define SENSOR_ID 40
+#define NAME "SW-High-Tunnel"
 
 // Optional fixed GPS coordinates for sensor registration (set to NAN if unknown)
-#define GPS_LATITUDE   44.839602
-#define GPS_LONGITUDE -122.777543
+#define GPS_LATITUDE   44.8395822
+#define GPS_LONGITUDE -122.7728593
+
+// 44.8395822°N 122.7728593°W
 
 
 // ------------ Build-time switches ------------
